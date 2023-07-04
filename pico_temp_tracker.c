@@ -47,9 +47,6 @@
 #include "pico/cyw43_arch.h"
 #include "hardware/gpio.h"
 
-//TODO: Remove this garbo function
-void naive_test();
-
 const uint DHT_PIN = 15;
 
 int main() {
@@ -118,7 +115,6 @@ int main() {
             about 0.003% of our available mem
         */
 
-        uint byte_array_raw[40];
         uint byte_array[40];
         uint last = 0;
         uint j = 0;
@@ -148,11 +144,11 @@ int main() {
                 byte_array[j] = 0;
             }
 
-            byte_array_raw[j] = count;
             j++;
             sleep_us(1);
         }
 
+        // FIXME: Does not work for negative temp values... which is sort of the point
         int formatted_data[5];
         uint k = 4;
         int builder = 0;
@@ -167,67 +163,13 @@ int main() {
                 power = 1;
             }
         }
-/* 
-        printf("Formatted decimal output: \n");
-        for (uint i = 0; i < 5; i++) {
-            printf("%d ", formatted_data[i]);
-        }
-        printf("\n"); 
-*/
-            
-        // FIXME: Does not work for negative temp values... which is sort of the point
+
         printf("Actual reading: ");
         float humidity = ((256 * ((float)formatted_data[0] + ((float)formatted_data[1]/256)))/10);
         float temp = ((256 * ((float)formatted_data[2] + ((float)formatted_data[3]/256)))/10);
         printf("Humidity: %.1f%% || ", humidity);
         printf("Temperature: %.1fC\n", temp);
-/* 
-        // this is all just test output
-        for (uint i = 0; i < 40; i++) {
-            printf("%d ", byte_array_raw[i]);
-        }
 
-        printf("\n");
-        for (uint i = 0; i < 40; i++) {
-            printf("%d", byte_array[i]);
-        }
-
-        printf("\n");
-
-        if (ack_part_1 && ack_part_2) {
-            printf("Sensor acknowledged\n");
-        }
-        else {
-            printf("Acknowledgement Failed\n");
-        }
-        // end test output
-  */
         sleep_ms(2000);
     }
-}
-
-
-/* made this to test timings
-    ack 1 = ~70 frames
-    ack 2 = ~65 frames
-    incoming byte low = 40 frames
-    incoming byte 0 = 20
-    incoming byte 1 = 55
-*/
-void naive_test() {
-    //let's just register data for the next 4800us
-    uint test[4800];
-    for (uint i = 0; i < 4800; i++) {
-        test[i] = gpio_get(DHT_PIN);
-        sleep_us(1);
-    }
-
-    for (uint i = 0; i < 4800; i++) {
-        printf("%d", test[i]);
-    }
-    printf("\n\n");
-}
-
-void debug() {
-
 }
