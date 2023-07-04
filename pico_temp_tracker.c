@@ -48,128 +48,137 @@
 #include "hardware/gpio.h"
 
 const uint DHT_PIN = 15;
+void request_reading();
+bool sensor_acknowledge();
 
 int main() {
     stdio_init_all();
-
-    // FIXME: init cyw43 here just for funsies. Refactor to networking core later
-    if (cyw43_arch_init_with_country(CYW43_COUNTRY_USA)) {
-        printf("Wi-Fi init failed");
-        return -1;
-    }
-
     gpio_init(DHT_PIN);
 
     while(true) {
-            
-        //request reading    
-        gpio_set_dir(DHT_PIN, GPIO_OUT);
-        gpio_put(DHT_PIN, 0);
-        sleep_ms(20);
-        gpio_put(DHT_PIN, 1);
-        // sleep_us(40); wtf this shit doesn't work
-        gpio_set_dir(DHT_PIN, GPIO_IN);
-
-        bool ack_part_1 = false;
-        bool ack_part_2 = false;
-        uint count = 0;
-
-        // TODO: Part 1 of the acknowledgement can probably be skipped, line high is more interesting
-
-        /*
-            Acknowledgement part 1, line low for 80µs.
-            (We count anything over 65 low readings as a true because reading
-            and processing data eats up a few cycles)
-        */
-        for (uint frame = 0; frame < 255; frame++) {
-            if (gpio_get(DHT_PIN) == 0) count++;
-            if (count > 65) {
-                ack_part_1 = true;
-                break;
-            }
-            sleep_us(1);
+        request_reading();
+        if (sensor_acknowledge() == false) {
+            printf("Sensor did not acknowledge read request.\n");
         }
-
-        count = 0;
-
-        /*
-            Acknowledgement part 2, line high for 80µs.
-            (We count anything over 60 high readings as a true because reading
-            and processing data eats up a few cycles)
-        */
-        for (uint frame = 0; frame < 255; frame++) {
-            if (gpio_get(DHT_PIN) == 1) count++;
-            if (count > 60) {
-                ack_part_2 = true;
-                break;
-            }
-            sleep_us(1);
-        }
+        else {
 
             sleep_us(4); // buffer between sensor ack and data
-        /*
-            Let's read the sensor values. Better programmers
-            will stuff the bits into bytes as values are read,
-            but I will settle on an int array. This uses 16x
-            the memory (80bytes to store 40 bits).. but that's
-            about 0.003% of our available mem
-        */
-
-        uint byte_array[40];
-        uint last = 0;
-        uint j = 0;
-        while (j < 40) {
-            count = 0;
-            for (uint kill = 0; kill < 256; kill++) {
-                // we sleep
-                if (gpio_get(DHT_PIN)) break;
-                sleep_us(1);
-            }
-            while (gpio_get(DHT_PIN)) {
-                // real shit
-                count++;
-                sleep_us(1);
-            }
-
             /*
-                For some reason, the short pulse-width (0) is *very*
-                stable and accurate, always coming in at a count of 20.
-                For this reason, we'll count anything longer than 30
-                as a high bit (1).
+                Let's read the sensor values. Better programmers
+                will stuff the bits into bytes as values are read,
+                but I will settle on an int array. This uses 16x
+                the memory (80bytes to store 40 bits).. but that's
+                about 0.003% of our available mem
             */
-            if (count > 30) {
-                byte_array[j] = 1;
-            }
-            else {
-                byte_array[j] = 0;
+
+            uint byte_array[40];
+            uint last = 0;
+            uint j = 0;
+            while (j < 40) {
+                uint hi_count = 0;
+                for (uint kill = 0; kill < 256; kill++) {
+                    // we sleep
+                    if (gpio_get(DHT_PIN)) break;
+                    sleep_us(1);
+                }
+                while (gpio_get(DHT_PIN)) {
+                    // real shit
+                    hi_count++;
+                    sleep_us(1);
+                }
+
+                /*
+                    For some reason, the short pulse-width (0) is *very*
+                    stable and accurate, always coming in at a count of 20.
+                    For this reason, we'll count anything longer than 30
+                    as a high bit (1).
+                */
+                if (hi_count > 30) {
+                    byte_array[j] = 1;
+                }
+                else {
+                    byte_array[j] = 0;
+                }
+
+                j++;
+                sleep_us(1);
             }
 
-            j++;
-            sleep_us(1);
+            // FIXME: Does not work for negative temp values... which is sort of the point
+            int formatted_data[5];
+            uint k = 4;
+            int builder = 0;
+            uint power = 1;
+            for (uint i = 0; i < 40; i++) {
+                builder += byte_array[(40 - 1) - i] * power;
+                power *= 2;
+                if ((i+1) % 8 == 0 && i != 40) {
+                    formatted_data[k] = builder;
+                    k--;
+                    builder = 0;
+                    power = 1;
+                }
+            }
+
+            printf("Actual reading: ");
+            float humidity = ((256 * ((float)formatted_data[0] + ((float)formatted_data[1]/256)))/10);
+            float temp = ((256 * ((float)formatted_data[2] + ((float)formatted_data[3]/256)))/10);
+            printf("Humidity: %.1f%% || ", humidity);
+            printf("Temperature: %.1fC\n", temp);
         }
-
-        // FIXME: Does not work for negative temp values... which is sort of the point
-        int formatted_data[5];
-        uint k = 4;
-        int builder = 0;
-        uint power = 1;
-        for (uint i = 0; i < 40; i++) {
-            builder += byte_array[(40 - 1) - i] * power;
-            power *= 2;
-            if ((i+1) % 8 == 0 && i != 40) {
-                formatted_data[k] = builder;
-                k--;
-                builder = 0;
-                power = 1;
-            }
-        }
-
-        printf("Actual reading: ");
-        float humidity = ((256 * ((float)formatted_data[0] + ((float)formatted_data[1]/256)))/10);
-        float temp = ((256 * ((float)formatted_data[2] + ((float)formatted_data[3]/256)))/10);
-        printf("Humidity: %.1f%% || ", humidity);
-        printf("Temperature: %.1fC\n", temp);
 
         sleep_ms(2000);
     }
+}
+
+/*
+    Initiates communication with the DHT22 by pulling
+    DHT_PIN low for a hefty 20ms, driving it high, then
+    immediately handing control over to the sensor.
+*/
+void request_reading() {
+    gpio_set_dir(DHT_PIN, GPIO_OUT);
+    gpio_put(DHT_PIN, 0);
+    sleep_ms(20);
+    gpio_put(DHT_PIN, 1);
+    gpio_set_dir(DHT_PIN, GPIO_IN);
+}
+
+/*
+    After requesting a reading, the DHT22 drives our
+    DHT_PIN low for 80us then high for 80us. This function
+    is calibrated to count this two-part acknowledgement
+    for 65us and 60us respectively since we lose some time
+    doing comparisons and assignments.
+
+    @returns true if both parts of the acknowledgement
+    were successful
+*/
+bool sensor_acknowledge() {
+    bool ack_part_1 = false;
+    bool ack_part_2 = false;
+    uint count = 0;
+    
+    // TODO: Part 1 of the acknowledgement can probably be skipped, line high is more interesting
+    for (uint frame = 0; frame < 255; frame++) {
+        if (gpio_get(DHT_PIN) == 0) count++;
+        if (count > 65) {
+            ack_part_1 = true;
+            break;
+        }
+        sleep_us(1);
+    }
+
+    count = 0;
+
+    for (uint frame = 0; frame < 255; frame++) {
+        if (gpio_get(DHT_PIN) == 1) count++;
+        if (count > 60) {
+            ack_part_2 = true;
+            break;
+        }
+        sleep_us(1);
+    }
+
+    return ack_part_1 && ack_part_2;
 }
