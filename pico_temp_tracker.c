@@ -55,7 +55,6 @@ void request_reading();
 bool sensor_acknowledge();
 bool read_data();
 bool format_data();
-void wipe_data();
 
 int main() {
     stdio_init_all();
@@ -80,7 +79,6 @@ int main() {
             printf("Temperature: %.1fC\n", temp);
         }
 
-        wipe_data();
         sleep_ms(2000);
     }
 }
@@ -201,16 +199,5 @@ bool format_data() {
             power = 1;
         }
     }
-    
-    return formatted_data[0] + formatted_data[1] + formatted_data[2] + formatted_data[3] == formatted_data[4];
+    return (formatted_data[0] + formatted_data[1] + formatted_data[2] + formatted_data[3]) == formatted_data[4];
 }
-
-void wipe_data() {
-    for (uint i = 0; i < 40; i++) {
-        byte_array[i] = 0;
-    }
-    for (uint i = 0; i < 5; i++) {
-        formatted_data[i] = 0;
-    }
-}
-
