@@ -55,6 +55,7 @@ void request_reading();
 bool sensor_acknowledge();
 bool read_data();
 bool format_data();
+void wipe_data();
 
 int main() {
     stdio_init_all();
@@ -65,21 +66,21 @@ int main() {
         if (sensor_acknowledge() == false) {
             printf("Sensor did not acknowledge read request.\n");
         }
-    
-        sleep_us(4); // buffer between sensor ack and data
-
-        if (read_data() == false) {
+        else if (read_data() == false) {
             printf("Did not receive a full 40bits of data.\n");
         }
+        else if (format_data() == false) {
+            printf("Checksum failed.\n");
+        }
+        else {
+            printf("Actual reading: ");
+            float humidity = ((256 * ((float)formatted_data[0] + ((float)formatted_data[1]/256)))/10);
+            float temp = ((256 * ((float)formatted_data[2] + ((float)formatted_data[3]/256)))/10);
+            printf("Humidity: %.1f%% || ", humidity);
+            printf("Temperature: %.1fC\n", temp);
+        }
 
-        format_data();
-
-        printf("Actual reading: ");
-        float humidity = ((256 * ((float)formatted_data[0] + ((float)formatted_data[1]/256)))/10);
-        float temp = ((256 * ((float)formatted_data[2] + ((float)formatted_data[3]/256)))/10);
-        printf("Humidity: %.1f%% || ", humidity);
-        printf("Temperature: %.1fC\n", temp);
-
+        wipe_data();
         sleep_ms(2000);
     }
 }
@@ -144,6 +145,8 @@ bool sensor_acknowledge() {
 */
 bool read_data() {
 
+    sleep_us(4); // buffer between sensor ack and data
+
     uint last = 0;
     uint j = 0;
     while (j < 40) {
@@ -201,3 +204,13 @@ bool format_data() {
     
     return formatted_data[0] + formatted_data[1] + formatted_data[2] + formatted_data[3] == formatted_data[4];
 }
+
+void wipe_data() {
+    for (uint i = 0; i < 40; i++) {
+        byte_array[i] = 0;
+    }
+    for (uint i = 0; i < 5; i++) {
+        formatted_data[i] = 0;
+    }
+}
+
