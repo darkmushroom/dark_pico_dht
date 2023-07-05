@@ -43,8 +43,8 @@
     we can throw in a full 2s delay before the next reading.
 */
 
+#include <stdio.h>
 #include "pico/stdlib.h"
-#include "pico/cyw43_arch.h"
 #include "hardware/gpio.h"
 
 const uint DHT_PIN = 15;
@@ -55,6 +55,7 @@ void request_reading();
 bool sensor_acknowledge();
 bool read_data();
 bool format_data();
+bool validate_checksum();
 
 int main() {
     stdio_init_all();
@@ -140,6 +141,8 @@ bool sensor_acknowledge() {
     I will settle on a static int array. This uses 16x the
     memory (80bytes to store 40 bits).. but that's about
     0.003% of our available mem
+
+    @returns true if we successfully received 40 bits
 */
 bool read_data() {
 
@@ -183,6 +186,8 @@ bool read_data() {
     Turn our big byte_array into a more manageable int
     array. There are fewer places in the code it is more
     clear I am uncomfortable with bitwise operations.
+
+    @returns true if the converted bytes matches the checksum
 */
 bool format_data() {
     // FIXME: Does not work for negative temp values... which is sort of the point
@@ -199,5 +204,18 @@ bool format_data() {
             power = 1;
         }
     }
-    return (formatted_data[0] + formatted_data[1] + formatted_data[2] + formatted_data[3]) == formatted_data[4];
+    return validate_checksum();
+}
+
+/*
+    DHT_22 checksum only cares about the last 8 bits of
+    the sum of all the other bytes. Values greater than
+    11111111 (255) will wrap.
+*/
+bool validate_checksum () {
+    int test = formatted_data[0] + formatted_data[1] + formatted_data[2] + formatted_data[3];
+    if (test > 255) {
+        return formatted_data[4] == (test - 256);
+    }
+    else return formatted_data[4] == test;
 }
