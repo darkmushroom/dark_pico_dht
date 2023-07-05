@@ -77,7 +77,7 @@ int main() {
             float humidity = ((256 * ((float)formatted_data[0] + ((float)formatted_data[1]/256)))/10);
             float temp = ((256 * ((float)formatted_data[2] + ((float)formatted_data[3]/256)))/10);
             printf("Humidity: %.1f%% || ", humidity);
-            printf("Temperature: %.1fC\n", temp);
+            printf("Temperature: %.1fC (%.1fF)\n", temp, temp * 9 / 5 + 32);
         }
 
         sleep_ms(2000);
