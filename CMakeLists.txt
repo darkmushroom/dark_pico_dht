@@ -29,6 +29,7 @@ add_executable(pico_temp_tracker
 target_link_libraries(pico_temp_tracker
   pico_stdlib
   pico_cyw43_arch_none
+  pico_multicore
 )
 
 # Treat USB as serial so we can reset + reload on build

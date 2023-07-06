@@ -46,12 +46,15 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
+#include "pico/multicore.h"
+#include "pico/util/queue.h"
 
 const uint DHT_PIN = 15;
 static uint byte_array[40];
 static int formatted_data[5];
 static int sign = 1;
 
+void core1_entry();
 void request_reading();
 bool sensor_acknowledge();
 bool read_data();
@@ -59,9 +62,37 @@ bool format_data();
 bool validate_checksum();
 void dump_sensor_data();
 
-int main() {
+struct Readings {
+    float humidity;
+    float temperature;
+};
+
+queue_t sensor_output;
+
+int main(void) {
+    struct Readings local;
+    local.humidity = 0.0f;
+    local.temperature = 0.0f;
+
     stdio_init_all();
+    queue_init(&sensor_output, sizeof(local), 2);
+    multicore_launch_core1(core1_entry);
+
+    // FIXME: First few values may be invalid or 0 while DHT warms up, throw these out
+
+    while (true) {
+        queue_try_remove(&sensor_output, &local);
+        printf("humidity: %.1f%%, temp: %.1fC (%.1fF)\n", local.humidity, local.temperature, local.temperature * 9 / 5 + 32);
+        sleep_ms(500);
+    }
+}
+
+void core1_entry () {
     gpio_init(DHT_PIN);
+
+    struct Readings reading;
+    reading.humidity = 0.0f;
+    reading.temperature = 0.0f;
 
     while(true) {
         request_reading();
@@ -76,13 +107,11 @@ int main() {
             dump_sensor_data();
         }
         else {
-            printf("Actual reading: ");
-            float humidity = ((256 * ((float)formatted_data[0] + ((float)formatted_data[1]/256)))/10);
-            float temp = ((256 * ((float)formatted_data[2] + ((float)formatted_data[3]/256)))/10) * sign;
-            printf("Humidity: %.1f%% || ", humidity);
-            printf("Temperature: %.1fC (%.1fF)\n", temp, temp * 9 / 5 + 32);
+            reading.humidity = ((256 * ((float)formatted_data[0] + ((float)formatted_data[1]/256)))/10);
+            reading.temperature = ((256 * ((float)formatted_data[2] + ((float)formatted_data[3]/256)))/10) * sign;
         }
 
+        queue_try_add(&sensor_output, &reading);
         sleep_ms(2000);
     }
 }
