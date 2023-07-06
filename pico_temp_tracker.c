@@ -50,12 +50,14 @@
 const uint DHT_PIN = 15;
 static uint byte_array[40];
 static int formatted_data[5];
+static int sign = 1;
 
 void request_reading();
 bool sensor_acknowledge();
 bool read_data();
 bool format_data();
 bool validate_checksum();
+void dump_sensor_data();
 
 int main() {
     stdio_init_all();
@@ -71,11 +73,12 @@ int main() {
         }
         else if (format_data() == false) {
             printf("Checksum failed.\n");
+            dump_sensor_data();
         }
         else {
             printf("Actual reading: ");
             float humidity = ((256 * ((float)formatted_data[0] + ((float)formatted_data[1]/256)))/10);
-            float temp = ((256 * ((float)formatted_data[2] + ((float)formatted_data[3]/256)))/10);
+            float temp = ((256 * ((float)formatted_data[2] + ((float)formatted_data[3]/256)))/10) * sign;
             printf("Humidity: %.1f%% || ", humidity);
             printf("Temperature: %.1fC (%.1fF)\n", temp, temp * 9 / 5 + 32);
         }
@@ -190,7 +193,6 @@ bool read_data() {
     @returns true if the converted bytes matches the checksum
 */
 bool format_data() {
-    // FIXME: Does not work for negative temp values... which is sort of the point
     uint k = 4;
     int accumulator = 0;
     uint power = 1;
@@ -204,7 +206,21 @@ bool format_data() {
             power = 1;
         }
     }
-    return validate_checksum();
+
+    bool validate_before_conversion = validate_checksum();
+
+    /*
+        if the top bit of byte 3 is 1, we're dealing with 
+        a negative temp. We'll set the sign to negative and
+        fix the formatted data. (data - 10000000 or 128)
+    */ 
+    sign = 1;
+    if (byte_array[16] == 1) {
+        sign = -1;
+        formatted_data[2] -= 128;
+    }
+
+    return validate_before_conversion;
 }
 
 /*
@@ -218,4 +234,15 @@ bool validate_checksum () {
         return formatted_data[4] == (test - 256);
     }
     else return formatted_data[4] == test;
+}
+
+void dump_sensor_data () {
+    for (uint i = 0; i < 5; i++) {
+        printf("%d ", formatted_data[i]);
+    }
+    printf("\n");
+    for (uint i = 0; i < 40; i++) {
+        printf("%d", byte_array[i]);
+    }
+    printf("\n");
 }
