@@ -51,31 +51,41 @@
 
 void core1_entry();
 
-queue_t sensor_output;
+queue_t sensor_output1;
+queue_t sensor_output2;
 struct Readings {
     float humidity;
     float temperature;
 };
 
 int main(void) {
-    struct Readings local;
-    local.humidity = 0.0f;
-    local.temperature = 0.0f;
+    struct Readings fridge;
+    fridge.humidity = 0.0f;
+    fridge.temperature = 0.0f;
+
+    struct Readings freezer;
+    freezer.humidity = 0.0f;
+    freezer.temperature = 0.0f;
 
     stdio_init_all();
-    queue_init(&sensor_output, sizeof(local), 2);
+    queue_init(&sensor_output1, sizeof(fridge), 2);
+    queue_init(&sensor_output2, sizeof(freezer), 2);
     multicore_launch_core1(core1_entry);
 
     // FIXME: First few values may be invalid or 0 while DHT warms up, throw these out
 
     while (true) {
-        queue_try_remove(&sensor_output, &local);
-        printf("humidity: %.1f%%, temp: %.1fC (%.1fF)\n", local.humidity, local.temperature, local.temperature * 9 / 5 + 32);
-        sleep_ms(500);
+        queue_try_remove(&sensor_output1, &fridge);
+        printf("fridge  > humidity: %.1f%%, temp: %.1fC (%.1fF)\n", fridge.humidity, fridge.temperature, fridge.temperature * 9 / 5 + 32);
+        sleep_ms(1000);
+        queue_try_remove(&sensor_output2, &freezer);
+        printf("freezer > humidity: %.1f%%, temp: %.1fC (%.1fF)\n", freezer.humidity, freezer.temperature, freezer.temperature * 9 / 5 + 32);
+        sleep_ms(1000);
     }
 }
 
-void request_reading(uint);
+struct Readings request_reading(uint);
+void wake_up_dht(uint);
 bool sensor_acknowledge(uint);
 bool read_data(uint, uint*); 
 bool format_data(uint*, int*, int*);
@@ -84,37 +94,47 @@ void dump_sensor_data(uint*, int*);
 
 void core1_entry () {
 
-    const uint DHT_PIN = 28;
-    static uint byte_array[40];
-    static int formatted_data[5];
-    static int sign = 1;
+    const uint DHT_PIN1 = 28;
+    const uint DHT_PIN2 = 15;
 
-    gpio_init(DHT_PIN);
+    gpio_init(DHT_PIN1);
+    gpio_init(DHT_PIN2);
 
+    while(true) {
+        struct Readings reading1 = request_reading(DHT_PIN1);
+        queue_try_add(&sensor_output1, &reading1);
+        sleep_ms(1000);
+        struct Readings reading2 = request_reading(DHT_PIN2);
+        queue_try_add(&sensor_output2, &reading2);
+        sleep_ms(1000);
+    }
+}
+
+struct Readings request_reading(uint DHT_PIN) {
+    uint byte_array[40];
+    int formatted_data[5];
+    int sign = 1;
     struct Readings reading;
     reading.humidity = 0.0f;
     reading.temperature = 0.0f;
 
-    while(true) {
-        request_reading(DHT_PIN);
-        if (sensor_acknowledge(DHT_PIN) == false) {
-            printf("Sensor did not acknowledge read request.\n");
-        }
-        else if (read_data(DHT_PIN, byte_array) == false) {
-            printf("Did not receive a full 40bits of data.\n");
-        }
-        else if (format_data(byte_array, formatted_data, &sign) == false) {
-            printf("Checksum failed.\n");
-            dump_sensor_data(byte_array, formatted_data);
-        }
-        else {
-            reading.humidity = ((256 * ((float)formatted_data[0] + ((float)formatted_data[1]/256)))/10);
-            reading.temperature = ((256 * ((float)formatted_data[2] + ((float)formatted_data[3]/256)))/10) * sign;
-        }
-
-        queue_try_add(&sensor_output, &reading);
-        sleep_ms(2000);
+    wake_up_dht(DHT_PIN);
+    if (sensor_acknowledge(DHT_PIN) == false) {
+        printf("Sensor did not acknowledge read request.\n");
     }
+    else if (read_data(DHT_PIN, byte_array) == false) {
+        printf("Did not receive a full 40bits of data.\n");
+    }
+    else if (format_data(byte_array, formatted_data, &sign) == false) {
+        printf("Checksum failed.\n");
+        dump_sensor_data(byte_array, formatted_data);
+    }
+    else {
+        reading.humidity = ((256 * ((float)formatted_data[0] + ((float)formatted_data[1]/256)))/10);
+        reading.temperature = ((256 * ((float)formatted_data[2] + ((float)formatted_data[3]/256)))/10) * sign;
+    }
+
+    return reading;
 }
 
 /*
@@ -122,7 +142,7 @@ void core1_entry () {
     DHT_PIN low for a hefty 20ms, driving it high, then
     immediately handing control over to the sensor.
 */
-void request_reading(uint DHT_PIN) {
+void wake_up_dht(uint DHT_PIN) {
     gpio_set_dir(DHT_PIN, GPIO_OUT);
     gpio_put(DHT_PIN, 0);
     sleep_ms(20);
