@@ -49,25 +49,13 @@
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
 
-const uint DHT_PIN = 15;
-static uint byte_array[40];
-static int formatted_data[5];
-static int sign = 1;
-
 void core1_entry();
-void request_reading();
-bool sensor_acknowledge();
-bool read_data();
-bool format_data();
-bool validate_checksum();
-void dump_sensor_data();
 
+queue_t sensor_output;
 struct Readings {
     float humidity;
     float temperature;
 };
-
-queue_t sensor_output;
 
 int main(void) {
     struct Readings local;
@@ -87,7 +75,20 @@ int main(void) {
     }
 }
 
+void request_reading(uint);
+bool sensor_acknowledge(uint);
+bool read_data(uint, uint*); 
+bool format_data(uint*, int*, int*);
+bool validate_checksum(int*);
+void dump_sensor_data(uint*, int*);
+
 void core1_entry () {
+
+    const uint DHT_PIN = 28;
+    static uint byte_array[40];
+    static int formatted_data[5];
+    static int sign = 1;
+
     gpio_init(DHT_PIN);
 
     struct Readings reading;
@@ -95,16 +96,16 @@ void core1_entry () {
     reading.temperature = 0.0f;
 
     while(true) {
-        request_reading();
-        if (sensor_acknowledge() == false) {
+        request_reading(DHT_PIN);
+        if (sensor_acknowledge(DHT_PIN) == false) {
             printf("Sensor did not acknowledge read request.\n");
         }
-        else if (read_data() == false) {
+        else if (read_data(DHT_PIN, byte_array) == false) {
             printf("Did not receive a full 40bits of data.\n");
         }
-        else if (format_data() == false) {
+        else if (format_data(byte_array, formatted_data, &sign) == false) {
             printf("Checksum failed.\n");
-            dump_sensor_data();
+            dump_sensor_data(byte_array, formatted_data);
         }
         else {
             reading.humidity = ((256 * ((float)formatted_data[0] + ((float)formatted_data[1]/256)))/10);
@@ -121,7 +122,7 @@ void core1_entry () {
     DHT_PIN low for a hefty 20ms, driving it high, then
     immediately handing control over to the sensor.
 */
-void request_reading() {
+void request_reading(uint DHT_PIN) {
     gpio_set_dir(DHT_PIN, GPIO_OUT);
     gpio_put(DHT_PIN, 0);
     sleep_ms(20);
@@ -139,7 +140,7 @@ void request_reading() {
     @returns true if both parts of the acknowledgement
     were successful
 */
-bool sensor_acknowledge() {
+bool sensor_acknowledge(uint DHT_PIN) {
     bool ack_part_1 = false;
     bool ack_part_2 = false;
     uint count = 0;
@@ -176,7 +177,7 @@ bool sensor_acknowledge() {
 
     @returns true if we successfully received 40 bits
 */
-bool read_data() {
+bool read_data(uint DHT_PIN, uint *byte_array) {
 
     sleep_us(4); // buffer between sensor ack and data
 
@@ -221,7 +222,7 @@ bool read_data() {
 
     @returns true if the converted bytes matches the checksum
 */
-bool format_data() {
+bool format_data(uint *byte_array, int *formatted_data, int *sign) {
     uint k = 4;
     int accumulator = 0;
     uint power = 1;
@@ -236,16 +237,16 @@ bool format_data() {
         }
     }
 
-    bool validate_before_conversion = validate_checksum();
+    bool validate_before_conversion = validate_checksum(formatted_data);
 
     /*
         if the top bit of byte 3 is 1, we're dealing with 
         a negative temp. We'll set the sign to negative and
         fix the formatted data. (data - 10000000 or 128)
     */ 
-    sign = 1;
+    *sign = 1;
     if (byte_array[16] == 1) {
-        sign = -1;
+        *sign = -1;
         formatted_data[2] -= 128;
     }
 
@@ -257,7 +258,7 @@ bool format_data() {
     the sum of all the other bytes. Values greater than
     11111111 (255) will wrap.
 */
-bool validate_checksum () {
+bool validate_checksum (int *formatted_data) {
     int test = formatted_data[0] + formatted_data[1] + formatted_data[2] + formatted_data[3];
     if (test > 255) {
         return formatted_data[4] == (test - 256);
@@ -265,7 +266,7 @@ bool validate_checksum () {
     else return formatted_data[4] == test;
 }
 
-void dump_sensor_data () {
+void dump_sensor_data (uint *byte_array, int *formatted_data) {
     for (uint i = 0; i < 5; i++) {
         printf("%d ", formatted_data[i]);
     }
