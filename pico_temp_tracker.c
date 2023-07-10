@@ -43,11 +43,14 @@ int main(void) {
     cyw43_arch_init_with_country(CYW43_COUNTRY_USA);
     cyw43_arch_enable_sta_mode();
 
-    while (!cyw43_arch_wifi_connect_timeout_ms(SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 10000)) {
-        printf("Failed to connect. Retrying in 10 seconds.\n");
+    while (true) {
+        int connected = -8;
+        connected = cyw43_arch_wifi_connect_timeout_ms(SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 10000);
+        if (connected == 0) break;
+        printf("Failed to connect. Retrying in 10 seconds. Error: %d\n", connected);
         sleep_ms(10000);
     }
-    printf("Connected!\n");    
+    printf("Connected!\n");
 
     // FIXME: First few values may be invalid or 0 while DHT warms up, throw these out
 
