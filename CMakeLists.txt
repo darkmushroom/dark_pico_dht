@@ -22,13 +22,28 @@ add_executable(pico_temp_tracker
   pico_temp_tracker.c
 )
 
-# TODO: cy43w_arch_none gives us no added utility.
-# https://github.com/raspberrypi/pico-sdk/releases
-# includes other cyw43 libs that may aid us greatly
-# building a server to host/send sensor values
+target_include_directories(pico_temp_tracker PRIVATE
+  ${CMAKE_CURRENT_LIST_DIR}
+)
+
+# pico_stdlib
+# Many useful functions here, including our printf and queue
+# https://www.raspberrypi.com/documentation/pico-sdk/high_level.html#pico_stdlib
+#
+# pico_cyw43_arch_lwip_poll
+# this library gives us a TCP/IP stack using lwip, compiled
+# specifically for our cyw43 chip.
+# https://github.com/raspberrypi/pico-sdk/releases/tag/1.4.0
+# https://www.nongnu.org/lwip/2_1_x/index.html
+# 
+# pico_multicore
+# Handles everything about initializing, setting up the
+# stack, and running code on the second pi pico cpu core
+# https://www.raspberrypi.com/documentation/pico-sdk/high_level.html#pico_multicore
 target_link_libraries(pico_temp_tracker
   pico_stdlib
-  pico_cyw43_arch_none
+  pico_cyw43_arch_lwip_poll
+  pico_lwip_arch
   pico_multicore
 )
 

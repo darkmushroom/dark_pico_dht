@@ -1,53 +1,19 @@
-/*
-    My understanding of dht22 communication
-
-    Relevant Pico hardware considerations:
-    Pi pico runs at 125mhz by default, so each clock is ~ .008µs.
-    Plenty fast for this communication
-
-    Relevant DHT22 hardware considerations:
-    In most instances, the line is pulled high by default.
-    This means there is no activity or communication going on.
-
-    Init/requesting a reading
-    1. Pi must set GPIO DHT_PIN to output mode
-    2. Pi pulls DHT_PIN low for at least 1ms (most sources recommend ~18ms) (20ms ACTUALLY WORKS)
-    NOPE (3. Pi then pulls the line high for 20~40µs) NOPE
-    4. Pi moves DHT_PIN to input mode, relinquishing control to the DHT
-    5. Acknowledgement part 1: DHT pulls the DHT_PIN low for 80µs
-    6. Acknowledgement part 2: DHT pulls the DHT_PIN high for 80µs
-    
-    If everything goes well, the DHT will begin sending out sensor data
-
-    Expected data format is 5 bytes long, MSB (big endian)
-    byte 1 = Relative Humidity (RH) high byte
-    byte 2 = RH low byte (0% to 1% using 0 to 255)
-    byte 3 = Temperature high byte (Celsius)
-    byte 4 = Temperature low byte (0C to 1C using 0 to 255)
-    byte 5 = Checksum*
-
-    * The checksum should equal the last 8 bits of the product of bytes 1-4
-    Last 8 bits of bytes 1+2+3+4 == checksum
-
-    Actually reading the data:
-    7. Every bit is preceeded by the DHT pulling the line low for 50µs
-    8. DHT will then pull the line high for 70µs to indicate a '1'
-    9. If the DHT transitions back to low after 26~28µs, we've received a '0'
-
-    Total communication time (worst case scenario) is:
-    18000µs + (NOPE)40µs(NOPE) + 80µs + 80µs + (50µs + 70µs)*40 = 23000µs
-    |-----------init-----------|-acknowledge-|------read------|
-
-    Data should only be requested every 2 seconds (to allow the DHT22 internal
-    sensor to accumulate a reading). Since total communication only takes 23ms,
-    we can throw in a full 2s delay before the next reading.
-*/
-
+// standard libs
 #include <stdio.h>
 #include "pico/stdlib.h"
+
+// hardware libs
 #include "hardware/gpio.h"
+
+// dual core support
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
+
+// network libs
+#include "pico/cyw43_arch.h"
+
+// contains passwords
+#include "secrets.h"
 
 void core1_entry();
 
@@ -67,10 +33,21 @@ int main(void) {
     freezer.humidity = 0.0f;
     freezer.temperature = 0.0f;
 
+    // wake up our stdio for debug output, init reading queues, and launch reading
     stdio_init_all();
     queue_init(&sensor_output1, sizeof(fridge), 2);
     queue_init(&sensor_output2, sizeof(freezer), 2);
     multicore_launch_core1(core1_entry);
+
+    // while core 1 is busy warming up our sensors, let's connect to the internet
+    cyw43_arch_init_with_country(CYW43_COUNTRY_USA);
+    cyw43_arch_enable_sta_mode();
+
+    while (!cyw43_arch_wifi_connect_timeout_ms(SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 10000)) {
+        printf("Failed to connect. Retrying in 10 seconds.\n");
+        sleep_ms(10000);
+    }
+    printf("Connected!\n");    
 
     // FIXME: First few values may be invalid or 0 while DHT warms up, throw these out
 
@@ -109,6 +86,61 @@ void core1_entry () {
         sleep_ms(1000);
     }
 }
+
+/*
+    My understanding of dht22 communication
+
+    Relevant Pico hardware considerations:
+    Pi pico runs at 125mhz by default, so each clock is ~ .008µs.
+    Plenty fast for this communication
+
+    Relevant DHT22 hardware considerations:
+    In most instances, the line is pulled high by default.
+    This means there is no activity or communication going on.
+
+    Init/requesting a reading
+    1. Pi must set GPIO DHT_PIN to output mode
+    2. + Pi pulls DHT_PIN low for at least 1ms (most sources recommend ~18ms)
+    3. ++ Pi then pulls the line high for 20~40µs
+    4. Pi moves DHT_PIN to input mode, relinquishing control to the DHT
+    5. Acknowledgement part 1: DHT pulls the DHT_PIN low for 80µs
+    6. Acknowledgement part 2: DHT pulls the DHT_PIN high for 80µs
+
+    + In practice, 20ms is required
+    ++ Despite the second 'pull high for 20µs' instruction being clearly
+    documented in the data sheet, we end up missing the first half of the
+    acknowledgement following these instructions. Instead, I opted to pull
+    the line high and /immediately/ hand control to the DHT_22
+
+    If everything goes well, the DHT will begin sending out sensor data
+
+    Expected data format is 5 bytes long, MSB (big endian)
+    byte 1 = Relative Humidity (RH) high byte
+    byte 2 = RH low byte (0% to 1% using 0 to 255)
+    byte 3 = Temperature high byte (Celsius)
+    byte 4 = Temperature low byte (0C to 1C using 0 to 255)
+    byte 5 = Checksum*
+
+    * The checksum should equal the last 8 bits of the product of bytes 1-4
+    Last 8 bits of bytes 1+2+3+4 == checksum
+
+    Actually reading the data:
+    7. Every bit is preceeded by the DHT pulling the line low for 50µs
+    8. DHT will then pull the line high for 70µs to indicate a '1'
+    9. If the DHT transitions back to low after 26~28µs, we've received a '0'
+
+    Total communication time (worst case scenario) is:
+    18000µs + 80µs + 80µs + (50µs + 70µs)*40 = 23000µs
+    |-init--|-acknowledge-|------read-------|
+
+    Data should only be requested every 2 seconds (to allow the DHT22 internal
+    sensor to accumulate a reading). Since total communication only takes 23ms,
+    we can throw in a full 2s delay before the next reading.
+
+    Imprecise but still incredibly helpful links:
+    * https://www.sparkfun.com/datasheets/Sensors/Temperature/DHT22.pdf
+    * https://www.nutsvolts.com/magazine/article/march2013_Henry
+*/
 
 struct Readings request_reading(uint DHT_PIN) {
     uint byte_array[40];

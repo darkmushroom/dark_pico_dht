@@ -3,3 +3,6 @@
 
 # ignore compiled output
 build
+
+# don't commit files with passwords
+secrets.h
