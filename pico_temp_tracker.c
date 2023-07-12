@@ -11,11 +11,15 @@
 
 // network libs
 #include "pico/cyw43_arch.h"
+#include "lwip/tcp.h"
 
 // contains passwords
 #include "secrets.h"
 
 void core1_entry();
+err_t accept_connection(void*, struct tcp_pcb*, err_t);
+err_t data_received(void*, struct tcp_pcb*, struct pbuf*, err_t);
+err_t poll_our_app(void*, struct tcp_pcb*);
 
 queue_t sensor_output1;
 queue_t sensor_output2;
@@ -40,27 +44,47 @@ int main(void) {
     multicore_launch_core1(core1_entry);
 
     // while core 1 is busy warming up our sensors, let's connect to the internet
+
+    // hardware init
     cyw43_arch_init_with_country(CYW43_COUNTRY_USA);
     cyw43_arch_enable_sta_mode();
 
+    // link layer init
     while (true) {
-        int connected = -8;
+        int connected = PICO_ERROR_CONNECT_FAILED;
         connected = cyw43_arch_wifi_connect_timeout_ms(SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 10000);
-        if (connected == 0) break;
+        if (connected == PICO_OK) break;
         printf("Failed to connect. Retrying in 10 seconds. Error: %d\n", connected);
         sleep_ms(10000);
     }
     printf("Connected!\n");
 
+    // transport layer init
+    struct tcp_pcb *prom_night = tcp_new();
+
+    // setup callbacks
+
+    // tcp_recv(prom_night, data_received);
+    // tcp_poll(prom_night, poll_our_app, 10);
+
+    tcp_bind(prom_night, IP_ANY_TYPE, 80);
+    prom_night = tcp_listen(prom_night);
+    tcp_accept(prom_night, accept_connection);
+
     // FIXME: First few values may be invalid or 0 while DHT warms up, throw these out
 
     while (true) {
+        cyw43_arch_lwip_begin();
+        cyw43_arch_poll();
+        cyw43_arch_lwip_end();
+
         queue_try_remove(&sensor_output1, &fridge);
-        printf("fridge  > humidity: %.1f%%, temp: %.1fC (%.1fF)\n", fridge.humidity, fridge.temperature, fridge.temperature * 9 / 5 + 32);
-        sleep_ms(1000);
+//        printf("fridge  > humidity: %.1f%%, temp: %.1fC (%.1fF)\n", fridge.humidity, fridge.temperature, fridge.temperature * 9 / 5 + 32);
+//        sleep_ms(1000);
         queue_try_remove(&sensor_output2, &freezer);
-        printf("freezer > humidity: %.1f%%, temp: %.1fC (%.1fF)\n", freezer.humidity, freezer.temperature, freezer.temperature * 9 / 5 + 32);
-        sleep_ms(1000);
+//        printf("freezer > humidity: %.1f%%, temp: %.1fC (%.1fF)\n", freezer.humidity, freezer.temperature, freezer.temperature * 9 / 5 + 32);
+//        sleep_ms(1000); 
+        sleep_ms(10);
     }
 }
 
@@ -88,6 +112,19 @@ void core1_entry () {
         queue_try_add(&sensor_output2, &reading2);
         sleep_ms(1000);
     }
+}
+
+err_t poll_our_app(void *arg, struct tcp_pcb *tpcb) {
+    printf("We're getting polled!\n");
+    return ERR_OK;
+}
+
+err_t accept_connection(void *arg, struct tcp_pcb *newpcb, err_t err){
+    printf("We made it here boyyyyyyyy (connection accept)\n");
+}
+
+err_t data_received(void *arg, struct tcp_pcb *tcpb, struct pbuf *p, err_t err) {
+    printf("We made it here boyyyyyyyy (data rcvd)\n");
 }
 
 /*

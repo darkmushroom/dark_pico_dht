@@ -43,7 +43,6 @@ target_include_directories(pico_temp_tracker PRIVATE
 target_link_libraries(pico_temp_tracker
   pico_stdlib
   pico_cyw43_arch_lwip_poll
-  pico_lwip_arch
   pico_multicore
 )
 
