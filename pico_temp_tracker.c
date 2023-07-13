@@ -114,17 +114,35 @@ void core1_entry () {
     }
 }
 
-err_t poll_our_app(void *arg, struct tcp_pcb *tpcb) {
-    printf("We're getting polled!\n");
+err_t accept_connection(void *arg, struct tcp_pcb *newpcb, err_t err){
+    printf("We made it here boyyyyyyyy (connection accept)\n");
+    tcp_recv(newpcb, data_received);
     return ERR_OK;
 }
 
-err_t accept_connection(void *arg, struct tcp_pcb *newpcb, err_t err){
-    printf("We made it here boyyyyyyyy (connection accept)\n");
-}
+char temp[1000];
+uint pos = 0;
 
 err_t data_received(void *arg, struct tcp_pcb *tcpb, struct pbuf *p, err_t err) {
-    printf("We made it here boyyyyyyyy (data rcvd)\n");
+
+    if (p==NULL) {
+        printf("Client closed (or acknowledged we closed) the connection");
+        return ERR_OK;
+    } 
+
+    printf("received data from %s.\nTotal length: %d Length received: %d\n",ipaddr_ntoa(&tcpb->local_ip), p->tot_len, p->len);
+    pbuf_copy_partial(p,temp,p->tot_len-pos,pos);
+    pos+=p->tot_len;
+    tcp_recved(tcpb, p->tot_len);
+
+    //testing
+    printf("Data recieved so far:\n%s\n", temp);
+    if (pos == p->tot_len) {
+        tcp_close(tcpb);
+        pos = 0;
+    }
+    pbuf_free(p);
+    return ERR_OK;
 }
 
 /*
