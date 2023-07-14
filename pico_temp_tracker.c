@@ -1,3 +1,5 @@
+// TODO God help me when I have to break this code into separate libraries
+
 // standard libs
 #include <stdio.h>
 #include "pico/stdlib.h"
@@ -19,7 +21,6 @@
 void core1_entry();
 err_t accept_connection(void*, struct tcp_pcb*, err_t);
 err_t data_received(void*, struct tcp_pcb*, struct pbuf*, err_t);
-err_t poll_our_app(void*, struct tcp_pcb*);
 
 queue_t sensor_output1;
 queue_t sensor_output2;
@@ -62,10 +63,6 @@ int main(void) {
     // transport layer init
     struct tcp_pcb *prom_night = tcp_new();
 
-    // setup callbacks
-
-    // tcp_recv(prom_night, data_received);
-    // tcp_poll(prom_night, poll_our_app, 10);
 
     tcp_bind(prom_night, IP_ANY_TYPE, 80);
     prom_night = tcp_listen(prom_night);
@@ -88,56 +85,39 @@ int main(void) {
     }
 }
 
-struct Readings request_reading(uint);
-void wake_up_dht(uint);
-bool sensor_acknowledge(uint);
-bool read_data(uint, uint*); 
-bool format_data(uint*, int*, int*);
-bool validate_checksum(int*);
-void dump_sensor_data(uint*, int*);
-
-void core1_entry () {
-
-    const uint DHT_PIN1 = 28;
-    const uint DHT_PIN2 = 15;
-
-    gpio_init(DHT_PIN1);
-    gpio_init(DHT_PIN2);
-
-    while(true) {
-        struct Readings reading1 = request_reading(DHT_PIN1);
-        queue_try_add(&sensor_output1, &reading1);
-        sleep_ms(1000);
-        struct Readings reading2 = request_reading(DHT_PIN2);
-        queue_try_add(&sensor_output2, &reading2);
-        sleep_ms(1000);
-    }
-}
-
 err_t accept_connection(void *arg, struct tcp_pcb *newpcb, err_t err){
-    printf("We made it here boyyyyyyyy (connection accept)\n");
+    printf("connection accept\n");
     tcp_recv(newpcb, data_received);
     return ERR_OK;
 }
 
+// FIXME this variable doesn't get cleared correctly
 char temp[1000];
 uint pos = 0;
 
 err_t data_received(void *arg, struct tcp_pcb *tcpb, struct pbuf *p, err_t err) {
 
     if (p==NULL) {
-        printf("Client closed (or acknowledged we closed) the connection");
+        printf("Client closed (or acknowledged we closed) the connection\n");
         return ERR_OK;
     } 
 
     printf("received data from %s.\nTotal length: %d Length received: %d\n",ipaddr_ntoa(&tcpb->local_ip), p->tot_len, p->len);
+    // FIXME This code almost certainly doesn't handle large reads correctly
     pbuf_copy_partial(p,temp,p->tot_len-pos,pos);
     pos+=p->tot_len;
     tcp_recved(tcpb, p->tot_len);
 
     //testing
-    printf("Data recieved so far:\n%s\n", temp);
+    printf("Data received so far:\n%s\n", temp);
     if (pos == p->tot_len) {
+        //FIXME this output code should /really/ belong in its own function
+        //FIXME preparing the headers and content body would be easier as two separate steps
+        //TODO actually output sensor data
+        char hi[]="HTTP/1.1 200 OK\r\nContent-Length: 20\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<html>haiii</html>\r";
+        hi[strlen(hi)] = '\n'; //replace null terminator
+        tcp_write(tcpb, hi, sizeof(hi), TCP_WRITE_FLAG_COPY);
+        tcp_output(tcpb); //write immediately
         tcp_close(tcpb);
         pos = 0;
     }
@@ -199,6 +179,46 @@ err_t data_received(void *arg, struct tcp_pcb *tcpb, struct pbuf *p, err_t err) 
     * https://www.sparkfun.com/datasheets/Sensors/Temperature/DHT22.pdf
     * https://www.nutsvolts.com/magazine/article/march2013_Henry
 */
+
+struct Readings request_reading(uint);
+void wake_up_dht(uint);
+bool sensor_acknowledge(uint);
+bool read_data(uint, uint*);
+bool format_data(uint*, int*, int*);
+bool validate_checksum(int*);
+void dump_sensor_data(uint*, int*);
+
+void core1_entry () {
+
+    const uint DHT_PIN1 = 28;
+    const uint DHT_PIN2 = 15;
+
+    gpio_init(DHT_PIN1);
+    gpio_init(DHT_PIN2);
+
+    /*
+        FIXME The sleeps in this loop badly slow down
+        core0. Preliminary research suggests sleep is
+        handled by a timer on core0.
+        Ideas on how to fix:
+        * Switch our netcode to core1, sensors core0
+        * write a more 'busy' wait, allowing core0 to poll
+        between sleeps?
+        * setup a callback timer that wakes up the sensors
+        after a certain amount of time (if sleep doesn't
+        do this already)
+    */
+
+   // FIXME sensors should push new data into the queue if it is full
+    while(true) {
+        struct Readings reading1 = request_reading(DHT_PIN1);
+        queue_try_add(&sensor_output1, &reading1);
+        sleep_ms(1000);
+        struct Readings reading2 = request_reading(DHT_PIN2);
+        queue_try_add(&sensor_output2, &reading2);
+        sleep_ms(1000);
+    }
+}
 
 struct Readings request_reading(uint DHT_PIN) {
     uint byte_array[40];
